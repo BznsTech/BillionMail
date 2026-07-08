@@ -101,8 +101,11 @@ export DEBIAN_FRONTEND=noninteractive
 # makes apt refuse to update. Non-fatal: the packages below are likely already
 # installed, so a flaky index refresh must not abort the whole deploy.
 apt-get update -y -qq --allow-releaseinfo-change || warn "apt-get update reported issues — continuing"
-# Installing already-present packages is a no-op and does NOT restart nginx.
-apt-get install -y -qq ca-certificates curl openssl nginx ufw certbot python3-certbot-nginx >/dev/null \
+# --no-upgrade: never touch packages that are ALREADY installed (nginx, certbot,
+# etc. from the other deploys). This guarantees we do not upgrade/restart the
+# running Nginx out from under twreed/rkan/whatsadd — only genuinely-missing
+# packages get installed.
+apt-get install -y -qq --no-upgrade ca-certificates curl openssl nginx ufw certbot python3-certbot-nginx >/dev/null \
   || die "Failed to install base packages. Run 'apt-get update' manually to see the underlying error, then re-run."
 
 # --- 2. Docker (install only if missing; never disturb an existing engine) ----
@@ -185,6 +188,20 @@ set_env WEB_BASE_PATH        ""
 # the host's shared MariaDB:3306 / Redis:6379).
 set_env SQL_PORT             "127.0.0.1:25432"
 set_env REDIS_PORT           "127.0.0.1:26379"
+
+# Pick a Docker bridge subnet that does NOT overlap an existing route/interface
+# on this host — an overlap could disrupt routing for the other services. Reuse
+# the configured base if it is clear; otherwise step to the next free /24.
+NET_BASE="$(get_env IPV4_NETWORK)"; [ -n "${NET_BASE}" ] || NET_BASE="172.66.1"
+net_in_use() { ip -o route show 2>/dev/null | grep -q " ${1}\." || ip -o addr show 2>/dev/null | grep -q " ${1}\."; }
+if net_in_use "${NET_BASE}"; then
+  warn "Docker subnet ${NET_BASE}.0/24 overlaps an existing network on this host — choosing another"
+  for cand in 172.66.1 172.66.2 172.66.3 172.28.7 172.29.7 172.30.7 10.66.7; do
+    if ! net_in_use "${cand}"; then NET_BASE="${cand}"; break; fi
+  done
+fi
+set_env IPV4_NETWORK "${NET_BASE}"
+log "Docker bridge subnet: ${NET_BASE}.0/24"
 
 SAFE_PATH="$(get_env SafePath)"
 ADMIN_USER="$(get_env ADMIN_USERNAME)"
