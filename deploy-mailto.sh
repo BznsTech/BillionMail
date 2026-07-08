@@ -96,9 +96,14 @@ log "Deploying '${DOMAIN}' from ${APP_DIR}"
 # --- 1. Base host packages (idempotent; these are mostly already present) -----
 log "Ensuring base packages (nginx, certbot, openssl, ufw, curl)"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -qq
+# --allow-releaseinfo-change: a pre-existing 3rd-party repo on this box (the
+# ondrej/php PPA from the whatsadd deploy) changed its Label, which otherwise
+# makes apt refuse to update. Non-fatal: the packages below are likely already
+# installed, so a flaky index refresh must not abort the whole deploy.
+apt-get update -y -qq --allow-releaseinfo-change || warn "apt-get update reported issues — continuing"
 # Installing already-present packages is a no-op and does NOT restart nginx.
-apt-get install -y -qq ca-certificates curl openssl nginx ufw certbot python3-certbot-nginx >/dev/null
+apt-get install -y -qq ca-certificates curl openssl nginx ufw certbot python3-certbot-nginx >/dev/null \
+  || die "Failed to install base packages. Run 'apt-get update' manually to see the underlying error, then re-run."
 
 # --- 2. Docker (install only if missing; never disturb an existing engine) ----
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
